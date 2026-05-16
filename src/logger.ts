@@ -15,6 +15,8 @@
 
 import pino from 'pino';
 
+import { parseLogLevel } from './config';
+
 export const logger = pino({
-  level: process.env.LOG_LEVEL ?? 'info',
+  level: parseLogLevel('LOG_LEVEL', process.env.LOG_LEVEL, 'info'),
 });

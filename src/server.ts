@@ -8,10 +8,11 @@
  */
 
 import { buildApp } from './app';
+import { parseHost, parsePositiveInt } from './config';
 import { logger } from './logger';
 
-const PORT = process.env.PORT ? Number(process.env.PORT) : 3000;
-const HOST = process.env.HOST ?? '0.0.0.0';
+const PORT = parsePositiveInt('PORT', process.env.PORT, 3000);
+const HOST = parseHost('HOST', process.env.HOST, '0.0.0.0');
 
 async function main(): Promise<void> {
   const app = await buildApp();

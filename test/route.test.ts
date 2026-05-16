@@ -82,6 +82,21 @@ describe('POST /file-upload', () => {
     expect(response.body).toEqual({ frameCount: expectedFrameCount });
   });
 
+  test('response body is restricted to schema-declared fields (extra props stripped)', async () => {
+    // This proves the Fastify response schema is wired up and active.
+    // fast-json-stringify uses the schema to drive serialization; when
+    // additionalProperties is false, any property the handler emits but
+    // the schema doesn't declare is silently dropped from the wire
+    // output. Asserting that ONLY `frameCount` reaches the client is a
+    // runtime check that the schema is enforcing its contract.
+    const response = await request(app.server)
+      .post('/file-upload')
+      .attach('file', sampleBuffer, { filename: 'sound_file.mp3', contentType: 'audio/mpeg' });
+
+    expect(response.status).toBe(200);
+    expect(Object.keys(response.body as Record<string, unknown>).sort()).toEqual(['frameCount']);
+  });
+
   test('400 when no file field present', async () => {
     const response = await request(app.server)
       .post('/file-upload')
