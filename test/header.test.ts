@@ -12,7 +12,7 @@
  * decode hex constants in their head.
  */
 
-import { HEADER_SIZE_BYTES, decodeHeader, isSyncWord } from '../src/mp3/header';
+import { HEADER_SIZE_BYTES, decodeHeader, isSyncWord32 } from '../src/mp3/header';
 
 interface BuildHeaderOptions {
   /** 2-bit version ID. 0b11 = MPEG-1 (the only accepted value). */
@@ -44,15 +44,17 @@ function buildHeader(opts: BuildHeaderOptions): Buffer {
   return Buffer.from([b0, b1, b2, b3]);
 }
 
-describe('isSyncWord', () => {
+describe('isSyncWord32', () => {
   test('accepts canonical MPEG sync', () => {
-    expect(isSyncWord(0xff, 0xfb)).toBe(true);
+    // 0xFFFB0000 — top 11 bits all 1, rest doesn't matter for sync.
+    expect(isSyncWord32(0xfffb_0000)).toBe(true);
   });
   test('rejects when first byte is not 0xFF', () => {
-    expect(isSyncWord(0xfe, 0xfb)).toBe(false);
+    expect(isSyncWord32(0xfefb_0000)).toBe(false);
   });
   test('rejects when top 3 bits of second byte are not all 1', () => {
-    expect(isSyncWord(0xff, 0b1101_1011)).toBe(false);
+    // 0xFFDB0000 — second byte 0xDB has top 3 bits 110, not 111.
+    expect(isSyncWord32(0xffdb_0000)).toBe(false);
   });
 });
 

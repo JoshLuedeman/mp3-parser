@@ -50,20 +50,20 @@ import type { FrameHeader } from './types';
 export const HEADER_SIZE_BYTES = 4;
 
 /**
- * Quick sync-word check on two bytes.
+ * Quick sync-word check on the top 11 bits of a 32-bit big-endian header word.
  *
- * The first 11 bits of any MPEG audio frame are `1`s ("frame sync"). That
- * means byte 0 is always `0xFF` and the top 3 bits of byte 1 are `111`.
- * This predicate is hot — it is called once per byte during resync scans —
- * so it is intentionally a single expression with no allocations.
+ * The first 11 bits of any MPEG audio frame are `1`s ("frame sync"), so
+ * the top 11 bits of the word are all set: `(word >>> 21) === 0b111_1111_1111`
+ * which is `0x7FF`. This is the hot path — called once per candidate
+ * position during resync — so it's a single mask + compare with no
+ * allocations.
  *
  * Note we check 11 bits, not 12. The 12-bit sync (`1111 1111 1111`) is
- * sometimes quoted, but the official spec says the sync word is 11 bits
- * and the 12th bit is the version ID. Either definition catches the same
- * candidate positions; we still validate the version bit explicitly below.
+ * sometimes quoted but the official spec says the sync word is 11 bits;
+ * the 12th bit is the version ID, which we validate explicitly below.
  */
-export function isSyncWord(byte0: number, byte1: number): boolean {
-  return byte0 === 0xff && (byte1 & 0xe0) === 0xe0;
+export function isSyncWord32(word: number): boolean {
+  return word >>> 21 === 0x7ff;
 }
 
 /**
@@ -94,40 +94,43 @@ export function isSyncWord(byte0: number, byte1: number): boolean {
  * conversion of the per-frame sample count).
  */
 export function decodeHeader(buf: Buffer, offset = 0): FrameHeader | null {
-  // Bounds check up front so subsequent index reads are safe under
-  // `noUncheckedIndexedAccess`. Returning null here lets the caller treat
+  // Bounds check up front. Returning null here lets the caller treat
   // "not enough bytes" the same as "not a valid header" — both mean
   // "advance the input and try again later."
   if (buf.length - offset < HEADER_SIZE_BYTES) {
     return null;
   }
 
-  const b0 = buf[offset]!;
-  const b1 = buf[offset + 1]!;
-  const b2 = buf[offset + 2]!;
-  // b3 is intentionally unread — channel mode / emphasis bits are not
-  // needed for frame counting. Leaving the read out keeps the function
-  // honest about which bits actually influence the result.
+  // Read the whole 4-byte header as a single big-endian 32-bit word.
+  // Using readUInt32BE rather than four indexed byte reads avoids the
+  // per-byte `undefined` widening under `noUncheckedIndexedAccess`,
+  // matches the on-wire bit order, and is one v8 instruction.
+  const word = buf.readUInt32BE(offset);
 
-  if (!isSyncWord(b0, b1)) return null;
+  if (!isSyncWord32(word)) return null;
 
-  // Version ID is the two bits immediately after the 11-bit sync.
-  // Layout of b1:  1 1 1 V V L L P    where V V = version, L L = layer,
-  //                                    P = protection bit.
-  const versionId = (b1 >> 3) & 0b11;
+  // 32-bit header layout (big-endian, MSB = bit 31):
+  //
+  //   bits 31..21: frame sync (11 × 1)
+  //   bits 20..19: version ID                ((word >>> 19) & 0b11)
+  //   bits 18..17: layer                     ((word >>> 17) & 0b11)
+  //   bit  16    : protection (ignored)
+  //   bits 15..12: bitrate index             ((word >>> 12) & 0b1111)
+  //   bits 11..10: sampling-frequency index  ((word >>> 10) & 0b11)
+  //   bit  9     : padding                   ((word >>> 9)  & 0b1)
+  //   bit  8     : private (ignored)
+  //   bits 7..0  : channel mode / mode ext / copyright / original / emphasis
+  //                — none of which influence frame length.
+
+  const versionId = (word >>> 19) & 0b11;
   if (versionId !== 0b11) return null; // not MPEG-1
 
-  const layer = (b1 >> 1) & 0b11;
+  const layer = (word >>> 17) & 0b11;
   if (layer !== 0b01) return null; // not Layer III
 
-  // b2 layout:  B B B B F F D X
-  //   B = bitrate index (4 bits)
-  //   F = sampling-frequency index (2 bits)
-  //   D = padding bit
-  //   X = private bit (ignored)
-  const bitrateIndex = (b2 >> 4) & 0b1111;
-  const sampleRateIndex = (b2 >> 2) & 0b11;
-  const padding = ((b2 >> 1) & 0b1) === 1;
+  const bitrateIndex = (word >>> 12) & 0b1111;
+  const sampleRateIndex = (word >>> 10) & 0b11;
+  const padding = ((word >>> 9) & 0b1) === 1;
 
   // Reject bitrate 0 (free) and 15 (reserved) explicitly via the table —
   // both slots are 0, which would also blow up the frame-length math if

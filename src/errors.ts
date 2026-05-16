@@ -54,6 +54,23 @@ export interface ErrorBody {
 }
 
 /**
+ * Type guard: does `err` have a string `code` property?
+ *
+ * Used to recognize Fastify's `FST_REQ_FILE_TOO_LARGE` (and similar
+ * error-code conventions) without resorting to a structural cast. The
+ * predicate's `is` clause lets the compiler narrow `err` to a shape
+ * with a `code: string` field inside the conditional block.
+ */
+function isErrorWithCode(err: unknown): err is { code: string } {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    typeof (err as { code: unknown }).code === 'string'
+  );
+}
+
+/**
  * Convert any thrown value into `{ status, body }` for a JSON response.
  *
  * We special-case:
@@ -79,21 +96,18 @@ export function mapError(err: unknown): { status: number; body: ErrorBody } {
     };
   }
   // Fastify multipart raises this when the per-file limit is exceeded.
-  // We check by the `code` field rather than instanceof because the
-  // class is not part of @fastify/multipart's public type surface.
-  if (typeof err === 'object' && err !== null && 'code' in err) {
-    const code = (err as { code?: unknown }).code;
-    if (code === 'FST_REQ_FILE_TOO_LARGE') {
-      return {
-        status: 413,
-        body: {
-          error: {
-            code: 'PAYLOAD_TOO_LARGE',
-            message: 'Uploaded file exceeds the configured size limit',
-          },
+  // We match by `code` rather than instanceof because the error class
+  // is not part of @fastify/multipart's public type surface.
+  if (isErrorWithCode(err) && err.code === 'FST_REQ_FILE_TOO_LARGE') {
+    return {
+      status: 413,
+      body: {
+        error: {
+          code: 'PAYLOAD_TOO_LARGE',
+          message: 'Uploaded file exceeds the configured size limit',
         },
-      };
-    }
+      },
+    };
   }
   return {
     status: 500,

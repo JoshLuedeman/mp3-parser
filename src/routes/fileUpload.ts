@@ -28,7 +28,9 @@ import {
   UnsupportedMediaTypeError,
   mapError,
 } from '../errors';
-import { countFrames } from '../mp3/parser';
+import { type BufferStream, countFrames } from '../mp3/parser';
+
+const JSON_CONTENT_TYPE = 'application/json; charset=utf-8';
 
 interface SuccessBody {
   readonly frameCount: number;
@@ -52,10 +54,9 @@ function isProbablyMp3(mimetype: string, filename: string | undefined): boolean 
 export function registerFileUploadRoute(app: FastifyInstance): void {
   app.post('/file-upload', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
-      // Get the *first* file part. `@fastify/multipart`'s `file()` helper
-      // returns a single MultipartFile (or throws if there's no file).
-      // We deliberately do not iterate over additional parts: the API
-      // contract says "an MP3 file," singular.
+      // `@fastify/multipart`'s `file()` helper returns a single
+      // MultipartFile or undefined. We deliberately do not iterate over
+      // additional parts: the API contract says "an MP3 file," singular.
       const part = await request.file();
       if (!part) {
         throw new BadRequestError('No file field present in multipart form', 'NO_FILE');
@@ -71,36 +72,39 @@ export function registerFileUploadRoute(app: FastifyInstance): void {
         );
       }
 
+      // Cross the boundary from Fastify's loosely-typed Readable into the
+      // parser's tight `AsyncIterable<Buffer>` contract. Busboy (which
+      // backs @fastify/multipart) only ever emits Buffer chunks for file
+      // parts, so the assertion is safe in practice; isolating it here
+      // means the parser body has zero casts of its own.
+      const fileStream = part.file as unknown as BufferStream;
+
+      let result;
       try {
-        const result = await countFrames(part.file);
-        // @fastify/multipart truncates the stream silently when fileSize
-        // is exceeded (even with `throwFileSizeLimit: true`, that option
-        // only affects `toBuffer()`, not raw stream consumption). After
-        // the stream is fully consumed, check the `truncated` flag to
-        // distinguish "valid short input" from "client sent too much."
-        if (part.file.truncated) {
-          throw new PayloadTooLargeError();
-        }
-        const body: SuccessBody = { frameCount: result.frameCount };
-        void reply.header('content-type', 'application/json; charset=utf-8');
-        return body;
-      } catch (err) {
-        // If the parser failed but the underlying cause is actually a
-        // size-limit truncation, surface that more useful 413 instead.
-        if (part.file.truncated) {
-          throw new PayloadTooLargeError();
-        }
-        throw err;
+        result = await countFrames(fileStream);
+      } catch (parseErr) {
+        // @fastify/multipart silently truncates the stream when fileSize
+        // is exceeded — `throwFileSizeLimit: true` only affects
+        // `toBuffer()`, not raw consumption. If we got here via a parse
+        // failure caused by truncation, surface the more useful 413.
+        if (part.file.truncated) throw new PayloadTooLargeError();
+        throw parseErr;
       }
+      if (part.file.truncated) throw new PayloadTooLargeError();
+
+      const body: SuccessBody = { frameCount: result.frameCount };
+      return reply.type(JSON_CONTENT_TYPE).send(body);
     } catch (err) {
       const { status, body } = mapError(err);
       if (status >= 500) {
         request.log.error({ err }, 'Unexpected error counting MP3 frames');
       } else {
-        request.log.warn({ err: { name: (err as Error).name } }, 'Request failed');
+        request.log.warn(
+          { errName: err instanceof Error ? err.name : 'unknown' },
+          'Request failed',
+        );
       }
-      void reply.status(status).header('content-type', 'application/json; charset=utf-8');
-      return body;
+      return reply.status(status).type(JSON_CONTENT_TYPE).send(body);
     }
   });
 }

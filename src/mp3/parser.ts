@@ -42,10 +42,20 @@
  *     headroom is generous.
  */
 
-import type { Readable } from 'node:stream';
-
-import { HEADER_SIZE_BYTES, decodeHeader, isSyncWord } from './header';
+import { HEADER_SIZE_BYTES, decodeHeader } from './header';
 import type { FrameHeader, ParseResult } from './types';
+
+/**
+ * What we actually consume: an async iterable of `Buffer` chunks. This is
+ * stricter than `Readable` (whose chunk type is essentially `any`) so the
+ * compiler can prove every chunk is a Buffer with no runtime guard.
+ *
+ * Callers passing a Node stream — including Fastify's multipart `file`
+ * field — must assert at the boundary that the stream emits Buffers.
+ * That cast lives in `src/routes/fileUpload.ts`, the one place we cross
+ * from Fastify's loose stream types into our parser's tight contract.
+ */
+export type BufferStream = AsyncIterable<Buffer>;
 
 /**
  * Soft cap on the working buffer.
@@ -141,7 +151,12 @@ type FindHeaderResult =
 function findNextHeader(buf: Buffer, start: number, maxScan: number): FindHeaderResult {
   const limit = Math.min(buf.length - HEADER_SIZE_BYTES, start + maxScan);
   for (let i = start; i <= limit; i++) {
-    if (!isSyncWord(buf[i]!, buf[i + 1]!)) continue;
+    // Cheap byte-0 prefilter: every valid frame starts with 0xFF. Skipping
+    // straight to `decodeHeader` would do the full validation per position
+    // and burn cycles on non-candidates. Buffer's index access is typed as
+    // `number | undefined` under `noUncheckedIndexedAccess`; a strict
+    // equality check against 0xff narrows it to number safely.
+    if (buf[i] !== 0xff) continue;
     const header = decodeHeader(buf, i);
     if (header) {
       return { found: true, offset: i, header };
@@ -161,13 +176,12 @@ function findNextHeader(buf: Buffer, start: number, maxScan: number): FindHeader
  *   beyond `MAX_BUFFER_BYTES` without making progress (indicating the
  *   input is not an MP3).
  */
-export async function countFrames(stream: Readable): Promise<ParseResult> {
+export async function countFrames(stream: BufferStream): Promise<ParseResult> {
   // The rolling buffer holds bytes we have *seen* but not yet *consumed*.
   // We append every chunk to it and slice off the consumed prefix once
-  // we have advanced past at least the next frame.
-  // Typed loosely as `Buffer` (rather than the generic-parameterized
-  // `Buffer<ArrayBuffer>` the Node 20 types infer) so we can accept
-  // chunks from any underlying ArrayBufferLike without TS contortions.
+  // we have advanced past at least the next frame. Typed as `Buffer`
+  // (without the generic ArrayBuffer parameter Node 20 infers) so any
+  // ArrayBufferLike-backed chunk concatenates cleanly.
   let buf: Buffer = Buffer.alloc(0);
 
   /** Absolute byte offset within the stream of `buf[0]`. */
@@ -200,14 +214,10 @@ export async function countFrames(stream: Readable): Promise<ParseResult> {
   const localOffset = (): number => cursor - bufStartAbsolute;
 
   // Stream consumption loop. `for await` automatically handles
-  // backpressure: it pauses the source while we're processing.
-  for await (const chunkUnknown of stream) {
-    // Defensive normalization — Fastify's multipart stream emits Buffers,
-    // but Readable is generic and we want a stable Buffer type regardless
-    // of underlying ArrayBuffer kind (ArrayBuffer vs SharedArrayBuffer).
-    const chunk: Buffer = Buffer.isBuffer(chunkUnknown)
-      ? Buffer.from(chunkUnknown)
-      : Buffer.from(chunkUnknown as Uint8Array);
+  // backpressure: it pauses the source while we're processing. The
+  // BufferStream input type guarantees `chunk` is a Buffer — no cast,
+  // no normalization, no runtime guard.
+  for await (const chunk of stream) {
     buf = buf.length === 0 ? chunk : Buffer.concat([buf, chunk]);
 
     // On the very first read, see if there's an ID3v2 tag to skip past.
