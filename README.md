@@ -9,7 +9,7 @@ Content-Type: multipart/form-data
 → 200 OK
   Content-Type: application/json; charset=utf-8
 
-  { "frameCount": 6090 }
+  { "frameCount": 6089 }
 ```
 
 ## Requirements
@@ -33,24 +33,24 @@ The server listens on `0.0.0.0:3000` by default (override with `PORT` / `HOST`).
 
 ```bash
 curl -F "file=@fixtures/sound_file.mp3" http://localhost:3000/file-upload
-# {"frameCount":6090}
+# {"frameCount":6089}
 ```
 
 ## Verifying the result
 
-The repository includes the sample file at `fixtures/sound_file.mp3`. This service reports **6090** frames for it. **mediainfo reports 6089** for the same file — that one-frame difference is a deliberate design choice, not a bug; see [Xing/Info VBR-header frame](#xinginfo-vbr-header-frame) below.
+The repository includes the sample file at `fixtures/sound_file.mp3`. This service reports **6089** frames for it, which matches `mediainfo --Inform="Audio;%FrameCount%"` exactly. See [Xing/Info VBR-header frame](#xinginfo-vbr-header-frame) below for why this is the right number and how we get there.
 
-> **Mediainfo is required to run the test suite.** Tests query it at runtime to derive the ground truth and assert `parserCount === mediainfoCount + 1`. There is no hardcoded fallback. Install with `brew install mediainfo` (macOS) before running `pnpm test`.
+> **Mediainfo is required to run the test suite.** Tests query it at runtime to derive the ground truth and assert `parserCount === mediainfoCount`. There is no hardcoded fallback. Install with `brew install mediainfo` (macOS) before running `pnpm test`.
 
 Three ways to verify:
 
-1. **Unit + integration tests** — `pnpm test` runs 36 tests. The sample-file assertion is `parserCount === mediainfoCount + 1`, with mediainfo shelled out at run time. A second cross-check derives an independent count from `music-metadata`'s duration math and asserts the same delta.
+1. **Unit + integration tests** — `pnpm test` runs the full suite. The sample-file assertion is `parserCount === mediainfoCount`, with mediainfo shelled out at run time. A second cross-check derives an independent count from `music-metadata`'s duration math and asserts the same result.
 2. **Manual `curl`** — start the server and POST the sample as shown above.
 3. **mediainfo cross-check script** — with the server running:
    ```bash
    pnpm verify:mediainfo
    ```
-   Invokes `mediainfo --Inform="Audio;%FrameCount%"` on the sample, calls the running service, and prints both numbers side-by-side along with the expected `+1` delta.
+   Invokes `mediainfo --Inform="Audio;%FrameCount%"` on the sample, calls the running service, and prints both numbers side-by-side.
 
 ## Testing & quality gates
 
@@ -121,22 +121,20 @@ Real-world MP3 files contain non-audio bytes in unexpected places (stale ID3 tag
 
 ### Xing/Info VBR-header frame
 
-VBR-encoded MP3s (like the provided sample) typically place a Xing or Info metadata block in the side-info region of the **first** MPEG-1 L3 frame. Structurally that frame is a real MPEG-1 L3 frame — correct sync, version, layer, sample rate, and length — and its 1152-sample payload is silence padding the metadata block. Counting it or not is a design choice every implementation has to make.
+VBR-encoded MP3s (like the provided sample) place a Xing, Info, or VBRI metadata block in the side-info region of the **first** MPEG-1 L3 frame. Structurally that frame is a valid MPEG-1 L3 frame — correct sync, version, layer, sample rate, and length — but its 1152-sample audio payload is silence padding the metadata. Whether to count it is a design choice every implementation faces.
 
-**This service counts it.** That decision rests on the literal reading of the MPEG audio spec (ISO/IEC 11172-3 §2.4.3.4), which defines a frame by its bit layout and not by whether the audio it carries is audible. Every byte in the file that matches the frame-header bit pattern and validates against the lookup tables is a frame.
-
-Different reference tools draw the line differently:
+**This service does not count it.** That decision follows the de facto convention of the dominant MP3 ecosystem:
 
 | Tool                                      | Reports for `sound_file.mp3` | Counts the Xing/Info frame? |
 | ----------------------------------------- | :--------------------------: | :-------------------------: |
-| **This service**                          |           **6090**           |             yes             |
+| **This service**                          |           **6089**           |             no              |
 | `mediainfo --Inform=Audio;%FrameCount%`   |             6089             |             no              |
 | `ffprobe -count_packets`                  |             6089             |             no              |
 | `music-metadata` (via duration × SR/1152) |            ≈ 6089            |             no              |
 
-The assignment names mediainfo as the verification tool. The test suite shells out to mediainfo at runtime and asserts `parserCount === mediainfoCount + 1` — the `+1` is the documented, deliberate Xing-frame delta, not a tolerance window. Any other delta is a bug.
+The assignment names mediainfo as the verification tool, so we match its output exactly. The literal MPEG audio spec (ISO/IEC 11172-3 §2.4.3.4) defines a frame structurally and would justify counting it — but every consumer-grade MP3 tool excludes it, and "what every other tool reports" is what users expect.
 
-If the grader's preferred interpretation excludes the Xing frame, the fix is local: gate the `frameCount = 1` line in [src/mp3/parser.ts](src/mp3/parser.ts) on a "is this frame a Xing/Info/VBRI header" check (probe ASCII `"Xing"` / `"Info"` / `"VBRI"` at frame-offset 21 for mono or 36 for stereo/JS/dual). The supporting argument and the table above make either choice defensible.
+Detection lives in [`src/mp3/vbrHeader.ts`](src/mp3/vbrHeader.ts): a pure function that probes byte offsets 21 (mono side-info) and 36 (stereo/JS/dual side-info, and the VBRI offset regardless of channel mode) of the first locked frame for the ASCII signatures `"Xing"`, `"Info"`, or `"VBRI"`. If a signature is found, the frame is excluded from the count.
 
 ### Out of scope
 
@@ -159,10 +157,12 @@ src/
   app.ts                 # buildApp() factory (shared by server + tests)
   routes/fileUpload.ts   # POST /file-upload handler
   mp3/
-    parser.ts            # streaming countFrames(Readable)
+    parser.ts            # streaming countFrames(BufferStream)
     header.ts            # 4-byte header decoder (pure)
+    vbrHeader.ts         # Xing/Info/VBRI detection (pure)
     tables.ts            # MPEG-1 L3 bitrate & sample-rate tables
     types.ts             # FrameHeader, ParseResult
+  config.ts              # env-var validators (PORT/HOST/LOG_LEVEL/MAX_FILE_BYTES)
   errors.ts              # typed HTTP errors + mapError()
   logger.ts              # pino logger
 test/                    # jest suites

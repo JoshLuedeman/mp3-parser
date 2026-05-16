@@ -89,16 +89,14 @@ function which(cmd) {
 
   const delta = serverCount - mediainfoCount;
   console.log(`\nDifference            : ${delta > 0 ? '+' : ''}${delta}`);
-  if (delta === 1) {
-    console.log(
-      '\nExpected +1: this service counts the Xing/Info VBR-header frame,\n' +
-        'mediainfo does not. See README "Xing/Info VBR-header frame".',
-    );
+  if (delta === 0) {
+    console.log('\nMatch — service output equals mediainfo exactly.');
     process.exit(0);
   }
   console.log(
-    '\nUnexpected delta. Expected exactly +1 (the Xing/Info VBR-header frame).\n' +
-      'Anything else indicates a real discrepancy between this service and mediainfo.',
+    '\nUnexpected delta. Expected exact match against mediainfo.\n' +
+      'A delta of +1 typically means the Xing/Info VBR-header frame is\n' +
+      'no longer being skipped — see src/mp3/vbrHeader.ts.',
   );
   process.exit(1);
 })();
