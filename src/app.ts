@@ -15,7 +15,6 @@
 import multipart from '@fastify/multipart';
 import Fastify, { type FastifyInstance } from 'fastify';
 
-import { logger } from './logger';
 import { registerFileUploadRoute } from './routes/fileUpload';
 
 export interface BuildAppOptions {
@@ -33,7 +32,12 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     (process.env.MAX_FILE_BYTES ? Number(process.env.MAX_FILE_BYTES) : DEFAULT_MAX_FILE_BYTES);
 
   const app = Fastify({
-    logger: options.disableRequestLogging ? false : logger,
+    // Let Fastify build its own pino instance from the options it
+    // expects — passing a pre-built pino logger trips a (legitimate)
+    // type mismatch with FastifyBaseLogger under strict types.
+    logger: options.disableRequestLogging
+      ? false
+      : { level: process.env.LOG_LEVEL ?? 'info' },
     // Generate request ids so log lines correlate.
     genReqId: () => `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     // Disable Fastify's body parser for non-multipart routes (we have

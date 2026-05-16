@@ -17,6 +17,4 @@ import pino from 'pino';
 
 export const logger = pino({
   level: process.env.LOG_LEVEL ?? 'info',
-  // Don't include pid/hostname in dev — they're noise.
-  base: process.env.NODE_ENV === 'production' ? undefined : { pid: undefined, hostname: undefined },
 });

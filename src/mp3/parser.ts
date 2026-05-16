@@ -134,20 +134,20 @@ function maybeSkipId3v2(buf: Buffer): number {
  * already a few cycles. Direct loop also lets us bail cleanly on
  * `maxScan`.
  */
-function findNextHeader(
-  buf: Buffer,
-  start: number,
-  maxScan: number,
-): { offset: number; header: FrameHeader } | { offset: -1; header: null } {
+type FindHeaderResult =
+  | { readonly found: true; readonly offset: number; readonly header: FrameHeader }
+  | { readonly found: false };
+
+function findNextHeader(buf: Buffer, start: number, maxScan: number): FindHeaderResult {
   const limit = Math.min(buf.length - HEADER_SIZE_BYTES, start + maxScan);
   for (let i = start; i <= limit; i++) {
     if (!isSyncWord(buf[i]!, buf[i + 1]!)) continue;
     const header = decodeHeader(buf, i);
     if (header) {
-      return { offset: i, header };
+      return { found: true, offset: i, header };
     }
   }
-  return { offset: -1, header: null };
+  return { found: false };
 }
 
 /**
@@ -199,9 +199,11 @@ export async function countFrames(stream: Readable): Promise<ParseResult> {
   // Stream consumption loop. `for await` automatically handles
   // backpressure: it pauses the source while we're processing.
   for await (const chunkUnknown of stream) {
-    // Defensive cast — Fastify's multipart stream emits Buffers, but the
-    // Readable type is generic.
-    const chunk = chunkUnknown as Buffer;
+    // Defensive normalization — Fastify's multipart stream emits Buffers,
+    // but Readable is generic and we want a stable Buffer type regardless
+    // of underlying ArrayBuffer kind (ArrayBuffer vs SharedArrayBuffer).
+    const chunk =
+      chunkUnknown instanceof Buffer ? chunkUnknown : Buffer.from(chunkUnknown as Uint8Array);
     buf = buf.length === 0 ? chunk : Buffer.concat([buf, chunk]);
 
     // On the very first read, see if there's an ID3v2 tag to skip past.
@@ -224,7 +226,7 @@ export async function countFrames(stream: Readable): Promise<ParseResult> {
       if (!locked) {
         // We have not yet found a valid frame. Scan for one.
         const found = findNextHeader(buf, localOffset(), MAX_RESYNC_SCAN_BYTES);
-        if (found.offset < 0) {
+        if (!found.found) {
           // No header in the bytes we have so far. If our buffer has
           // grown past MAX_BUFFER_BYTES without finding sync, this is
           // not an MP3.
@@ -266,7 +268,7 @@ export async function countFrames(stream: Readable): Promise<ParseResult> {
 
       // Header at the expected position didn't decode — resync.
       const resync = findNextHeader(buf, localOffset() + 1, MAX_RESYNC_SCAN_BYTES);
-      if (resync.offset < 0) {
+      if (!resync.found) {
         // Couldn't resync within what we have. If we've burned through
         // MAX_BUFFER_BYTES of garbage, give up.
         if (available() > MAX_BUFFER_BYTES) {
