@@ -17,11 +17,10 @@ import { buildApp } from '../src/app';
 const SAMPLE_PATH = path.join(__dirname, '..', 'fixtures', 'sound_file.mp3');
 
 /**
- * Ground truth comes from `mediainfo` — no fallback. See parser.test.ts
- * for the rationale and the documented `+1` Xing-frame delta.
+ * Ground truth comes from `mediainfo` — no fallback. The service matches
+ * mediainfo's frame count exactly (both exclude the Xing/Info/VBRI VBR
+ * metadata frame); see `src/mp3/vbrHeader.ts`.
  */
-const PARSER_OVER_MEDIAINFO = 1;
-
 function getMediainfoFrameCount(): number {
   const probe = spawnSync('mediainfo', ['--Inform=Audio;%FrameCount%', SAMPLE_PATH], {
     encoding: 'utf8',
@@ -60,7 +59,7 @@ describe('POST /file-upload', () => {
 
   beforeAll(async () => {
     sampleBuffer = await readFile(SAMPLE_PATH);
-    expectedFrameCount = getMediainfoFrameCount() + PARSER_OVER_MEDIAINFO;
+    expectedFrameCount = getMediainfoFrameCount();
   });
 
   beforeEach(async () => {

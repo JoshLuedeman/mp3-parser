@@ -22,25 +22,13 @@
  */
 
 /**
- * Number of MPEG-1 L3 frames in `sound_file.mp3` that this service
- * counts beyond what mediainfo reports.
- *
- * mediainfo (the verification tool named in the assignment) excludes
- * the Xing/Info VBR-header frame from its count — that frame is
- * structurally a valid MPEG-1 L3 frame but its audio payload is
- * silence padding metadata. This service follows the literal MPEG
- * spec, which defines a frame by its bit layout and not by audible
- * content, so it counts that frame. The fixed delta is therefore
- * +1 frame for any VBR-encoded MP3 with a Xing/Info/VBRI header.
- *
- * See `Design notes → Xing/Info VBR-header frame` in README.md.
- */
-const PARSER_OVER_MEDIAINFO = 1;
-
-/**
  * Query mediainfo for the canonical frame count. Mediainfo is a hard
  * requirement for these tests — no fallback, no fixture-baked number.
  * If mediainfo is missing or fails, the test must fail loudly.
+ *
+ * This service matches mediainfo's count exactly: both exclude the
+ * Xing/Info/VBRI VBR-header frame from the audible frame count. See
+ * `src/mp3/vbrHeader.ts` for the rationale.
  */
 function getMediainfoFrameCount(): number {
   const probe = spawnSync('mediainfo', ['--Inform=Audio;%FrameCount%', SAMPLE_PATH], {
@@ -99,16 +87,14 @@ function streamOfTinyChunks(buf: Buffer): Readable {
 
 describe('countFrames — provided sample file (mediainfo-verified)', () => {
   let sampleBuffer: Buffer;
-  let mediainfoCount: number;
   let expectedCount: number;
 
   beforeAll(async () => {
     sampleBuffer = await readFile(SAMPLE_PATH);
-    mediainfoCount = getMediainfoFrameCount();
-    expectedCount = mediainfoCount + PARSER_OVER_MEDIAINFO;
+    expectedCount = getMediainfoFrameCount();
   });
 
-  test('single-chunk stream returns mediainfo + 1 (Xing/Info VBR-header frame)', async () => {
+  test('single-chunk stream matches mediainfo exactly', async () => {
     const result = await countFrames(streamOf(sampleBuffer));
     expect(result.frameCount).toBe(expectedCount);
   });
@@ -124,11 +110,11 @@ describe('countFrames — provided sample file (mediainfo-verified)', () => {
     expect(a.frameCount).toBe(b.frameCount);
   });
 
-  test('matches music-metadata duration-derived count within the documented Xing delta', async () => {
+  test('matches music-metadata duration-derived count exactly', async () => {
     // Independent third-party cross-check: music-metadata reports
-    // duration; convert via samples-per-frame. music-metadata, like
-    // mediainfo, excludes the Xing/Info frame from its duration math,
-    // so the parser count should be exactly that count + 1.
+    // duration; convert via samples-per-frame. music-metadata excludes
+    // the Xing/Info frame from its duration math (same as mediainfo),
+    // and so do we — the counts should agree exactly.
     const result = await countFrames(streamOf(sampleBuffer));
     const metadata = await parseBuffer(sampleBuffer, 'audio/mpeg', { duration: true });
     const duration = metadata.format.duration;
@@ -138,7 +124,7 @@ describe('countFrames — provided sample file (mediainfo-verified)', () => {
     const referenceFrames = Math.round(
       ((duration as number) * (sampleRate as number)) / MPEG1_L3_SAMPLES_PER_FRAME,
     );
-    expect(result.frameCount).toBe(referenceFrames + PARSER_OVER_MEDIAINFO);
+    expect(result.frameCount).toBe(referenceFrames);
   });
 });
 
