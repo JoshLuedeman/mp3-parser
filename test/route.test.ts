@@ -5,6 +5,7 @@
  * Each test rebuilds a fresh app so size-limit overrides are isolated.
  */
 
+import { spawnSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
@@ -16,10 +17,32 @@ import { buildApp } from '../src/app';
 const SAMPLE_PATH = path.join(__dirname, '..', 'fixtures', 'sound_file.mp3');
 
 /**
- * Expected frame count for the provided sample. See parser.test.ts for
- * the derivation and the discussion of the Xing/Info VBR-header frame.
+ * Ground truth comes from `mediainfo` — no fallback. See parser.test.ts
+ * for the rationale and the documented `+1` Xing-frame delta.
  */
-const EXPECTED_FRAME_COUNT = 6090;
+const PARSER_OVER_MEDIAINFO = 1;
+
+function getMediainfoFrameCount(): number {
+  const probe = spawnSync('mediainfo', ['--Inform=Audio;%FrameCount%', SAMPLE_PATH], {
+    encoding: 'utf8',
+  });
+  if (probe.error) {
+    throw new Error(
+      `mediainfo is required for these tests but is not installed or not on PATH. ` +
+        `Install with \`brew install mediainfo\`. Underlying error: ${probe.error.message}`,
+    );
+  }
+  if (probe.status !== 0) {
+    throw new Error(
+      `mediainfo exited with status ${probe.status ?? '(null)'}: ${probe.stderr.trim()}`,
+    );
+  }
+  const n = Number(probe.stdout.trim());
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error(`mediainfo returned unparseable frame count: ${JSON.stringify(probe.stdout)}`);
+  }
+  return n;
+}
 
 /** Narrow shape of every error response body emitted by the route. */
 interface ErrorResponseBody {
@@ -33,9 +56,11 @@ function asErrorBody(body: unknown): ErrorResponseBody {
 describe('POST /file-upload', () => {
   let app: FastifyInstance;
   let sampleBuffer: Buffer;
+  let expectedFrameCount: number;
 
   beforeAll(async () => {
     sampleBuffer = await readFile(SAMPLE_PATH);
+    expectedFrameCount = getMediainfoFrameCount() + PARSER_OVER_MEDIAINFO;
   });
 
   beforeEach(async () => {
@@ -54,7 +79,7 @@ describe('POST /file-upload', () => {
 
     expect(response.status).toBe(200);
     expect(response.headers['content-type']).toMatch(/application\/json/);
-    expect(response.body).toEqual({ frameCount: EXPECTED_FRAME_COUNT });
+    expect(response.body).toEqual({ frameCount: expectedFrameCount });
   });
 
   test('400 when no file field present', async () => {

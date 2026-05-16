@@ -22,24 +22,49 @@
  */
 
 /**
- * Expected frame count for `fixtures/sound_file.mp3`.
+ * Number of MPEG-1 L3 frames in `sound_file.mp3` that this service
+ * counts beyond what mediainfo reports.
  *
- * Derived by counting every valid MPEG-1 Audio Layer III frame in the
- * file, *including* the Xing/Info VBR-header frame. Cross-verified:
- *   - `ffprobe -count_packets` reports 6089 (excludes the Xing frame).
- *   - `music-metadata`'s duration of 159.0596s × 44100 / 1152 = 6088.99,
- *     i.e. 6089 frames of audible content.
- *   - Our parser, which counts every structurally valid frame, reports
- *     one more (6090) because the Xing frame is a real MPEG-1 L3 frame
- *     by every criterion in the spec — valid header, valid length,
- *     correct sample rate.
+ * mediainfo (the verification tool named in the assignment) excludes
+ * the Xing/Info VBR-header frame from its count — that frame is
+ * structurally a valid MPEG-1 L3 frame but its audio payload is
+ * silence padding metadata. This service follows the literal MPEG
+ * spec, which defines a frame by its bit layout and not by audible
+ * content, so it counts that frame. The fixed delta is therefore
+ * +1 frame for any VBR-encoded MP3 with a Xing/Info/VBRI header.
  *
- * The MPEG audio spec does not distinguish "audio" from "metadata"
- * frames; the assignment asks for the number of MPEG-1 L3 frames.
- * Counting the Xing frame is the literal interpretation.
+ * See `Design notes → Xing/Info VBR-header frame` in README.md.
  */
-const EXPECTED_FRAME_COUNT = 6090;
+const PARSER_OVER_MEDIAINFO = 1;
 
+/**
+ * Query mediainfo for the canonical frame count. Mediainfo is a hard
+ * requirement for these tests — no fallback, no fixture-baked number.
+ * If mediainfo is missing or fails, the test must fail loudly.
+ */
+function getMediainfoFrameCount(): number {
+  const probe = spawnSync('mediainfo', ['--Inform=Audio;%FrameCount%', SAMPLE_PATH], {
+    encoding: 'utf8',
+  });
+  if (probe.error) {
+    throw new Error(
+      `mediainfo is required for these tests but is not installed or not on PATH. ` +
+        `Install with \`brew install mediainfo\`. Underlying error: ${probe.error.message}`,
+    );
+  }
+  if (probe.status !== 0) {
+    throw new Error(
+      `mediainfo exited with status ${probe.status ?? '(null)'}: ${probe.stderr.trim()}`,
+    );
+  }
+  const n = Number(probe.stdout.trim());
+  if (!Number.isFinite(n) || n <= 0) {
+    throw new Error(`mediainfo returned unparseable frame count: ${JSON.stringify(probe.stdout)}`);
+  }
+  return n;
+}
+
+import { spawnSync } from 'node:child_process';
 import { Readable } from 'node:stream';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -72,21 +97,25 @@ function streamOfTinyChunks(buf: Buffer): Readable {
   );
 }
 
-describe('countFrames — provided sample file', () => {
+describe('countFrames — provided sample file (mediainfo-verified)', () => {
   let sampleBuffer: Buffer;
+  let mediainfoCount: number;
+  let expectedCount: number;
 
   beforeAll(async () => {
     sampleBuffer = await readFile(SAMPLE_PATH);
+    mediainfoCount = getMediainfoFrameCount();
+    expectedCount = mediainfoCount + PARSER_OVER_MEDIAINFO;
   });
 
-  test('single-chunk stream returns the expected frame count', async () => {
+  test('single-chunk stream returns mediainfo + 1 (Xing/Info VBR-header frame)', async () => {
     const result = await countFrames(streamOf(sampleBuffer));
-    expect(result.frameCount).toBe(EXPECTED_FRAME_COUNT);
+    expect(result.frameCount).toBe(expectedCount);
   });
 
   test('1-byte-chunk stream returns the same count (exercises buffer boundaries)', async () => {
     const result = await countFrames(streamOfTinyChunks(sampleBuffer));
-    expect(result.frameCount).toBe(EXPECTED_FRAME_COUNT);
+    expect(result.frameCount).toBe(expectedCount);
   });
 
   test('result is deterministic across multiple runs', async () => {
@@ -95,11 +124,11 @@ describe('countFrames — provided sample file', () => {
     expect(a.frameCount).toBe(b.frameCount);
   });
 
-  test('matches music-metadata duration-derived count within 1 frame (Xing-frame ambiguity)', async () => {
-    // music-metadata reports duration but not numberOfSamples for VBR MP3s
-    // in 7.x. We derive the audible-frame count from duration × sampleRate
-    // and allow ±1 to account for the Xing/Info VBR header frame, which
-    // we count but reference decoders typically don't.
+  test('matches music-metadata duration-derived count within the documented Xing delta', async () => {
+    // Independent third-party cross-check: music-metadata reports
+    // duration; convert via samples-per-frame. music-metadata, like
+    // mediainfo, excludes the Xing/Info frame from its duration math,
+    // so the parser count should be exactly that count + 1.
     const result = await countFrames(streamOf(sampleBuffer));
     const metadata = await parseBuffer(sampleBuffer, 'audio/mpeg', { duration: true });
     const duration = metadata.format.duration;
@@ -109,7 +138,7 @@ describe('countFrames — provided sample file', () => {
     const referenceFrames = Math.round(
       ((duration as number) * (sampleRate as number)) / MPEG1_L3_SAMPLES_PER_FRAME,
     );
-    expect(Math.abs(result.frameCount - referenceFrames)).toBeLessThanOrEqual(1);
+    expect(result.frameCount).toBe(referenceFrames + PARSER_OVER_MEDIAINFO);
   });
 });
 
