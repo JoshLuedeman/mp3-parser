@@ -142,8 +142,7 @@ export function decodeHeader(buf: Buffer, offset = 0): FrameHeader | null {
   // less self-documenting. The +0 for padding (false coerces to 0) keeps
   // the branch off the hot path.
   const frameLengthBytes =
-    Math.floor((MPEG1_L3_FRAME_LENGTH_COEFFICIENT * bitrateBps) / sampleRateHz) +
-    (padding ? 1 : 0);
+    Math.floor((MPEG1_L3_FRAME_LENGTH_COEFFICIENT * bitrateBps) / sampleRateHz) + (padding ? 1 : 0);
 
   // Defensive: the minimum possible Layer III frame is 4 bytes (header
   // only at the lowest bitrate / highest sample rate combinations would

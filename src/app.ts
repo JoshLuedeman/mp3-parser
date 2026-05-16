@@ -35,9 +35,7 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     // Let Fastify build its own pino instance from the options it
     // expects — passing a pre-built pino logger trips a (legitimate)
     // type mismatch with FastifyBaseLogger under strict types.
-    logger: options.disableRequestLogging
-      ? false
-      : { level: process.env.LOG_LEVEL ?? 'info' },
+    logger: options.disableRequestLogging ? false : { level: process.env.LOG_LEVEL ?? 'info' },
     // Generate request ids so log lines correlate.
     genReqId: () => `req-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
     // Disable Fastify's body parser for non-multipart routes (we have
@@ -46,6 +44,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
   });
 
   await app.register(multipart, {
+    // Without this, @fastify/multipart silently *truncates* a stream
+    // that exceeds `fileSize` — the route would then see a partial
+    // upload and report it as "no valid frame found." We'd much rather
+    // surface a clear 413 to the client.
+    throwFileSizeLimit: true,
     limits: {
       // One file max per request.
       files: 1,
@@ -57,11 +60,11 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     },
   });
 
-  await registerFileUploadRoute(app);
+  registerFileUploadRoute(app);
 
   // Liveness probe — not part of the assignment, but standard hygiene
   // for anything you'd actually deploy. Trivial enough to leave in.
-  app.get('/healthz', async () => ({ status: 'ok' }));
+  app.get('/healthz', () => ({ status: 'ok' }));
 
   return app;
 }

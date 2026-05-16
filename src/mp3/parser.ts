@@ -165,7 +165,10 @@ export async function countFrames(stream: Readable): Promise<ParseResult> {
   // The rolling buffer holds bytes we have *seen* but not yet *consumed*.
   // We append every chunk to it and slice off the consumed prefix once
   // we have advanced past at least the next frame.
-  let buf = Buffer.alloc(0);
+  // Typed loosely as `Buffer` (rather than the generic-parameterized
+  // `Buffer<ArrayBuffer>` the Node 20 types infer) so we can accept
+  // chunks from any underlying ArrayBufferLike without TS contortions.
+  let buf: Buffer = Buffer.alloc(0);
 
   /** Absolute byte offset within the stream of `buf[0]`. */
   let bufStartAbsolute = 0;
@@ -202,8 +205,9 @@ export async function countFrames(stream: Readable): Promise<ParseResult> {
     // Defensive normalization — Fastify's multipart stream emits Buffers,
     // but Readable is generic and we want a stable Buffer type regardless
     // of underlying ArrayBuffer kind (ArrayBuffer vs SharedArrayBuffer).
-    const chunk =
-      chunkUnknown instanceof Buffer ? chunkUnknown : Buffer.from(chunkUnknown as Uint8Array);
+    const chunk: Buffer = Buffer.isBuffer(chunkUnknown)
+      ? Buffer.from(chunkUnknown)
+      : Buffer.from(chunkUnknown as Uint8Array);
     buf = buf.length === 0 ? chunk : Buffer.concat([buf, chunk]);
 
     // On the very first read, see if there's an ID3v2 tag to skip past.

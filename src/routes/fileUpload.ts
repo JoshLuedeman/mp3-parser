@@ -22,7 +22,12 @@
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 
-import { BadRequestError, UnsupportedMediaTypeError, mapError } from '../errors';
+import {
+  BadRequestError,
+  PayloadTooLargeError,
+  UnsupportedMediaTypeError,
+  mapError,
+} from '../errors';
 import { countFrames } from '../mp3/parser';
 
 interface SuccessBody {
@@ -44,7 +49,7 @@ function isProbablyMp3(mimetype: string, filename: string | undefined): boolean 
   return false;
 }
 
-export async function registerFileUploadRoute(app: FastifyInstance): Promise<void> {
+export function registerFileUploadRoute(app: FastifyInstance): void {
   app.post('/file-upload', async (request: FastifyRequest, reply: FastifyReply) => {
     try {
       // Get the *first* file part. `@fastify/multipart`'s `file()` helper
@@ -66,11 +71,27 @@ export async function registerFileUploadRoute(app: FastifyInstance): Promise<voi
         );
       }
 
-      const result = await countFrames(part.file);
-
-      const body: SuccessBody = { frameCount: result.frameCount };
-      reply.header('content-type', 'application/json; charset=utf-8');
-      return body;
+      try {
+        const result = await countFrames(part.file);
+        // @fastify/multipart truncates the stream silently when fileSize
+        // is exceeded (even with `throwFileSizeLimit: true`, that option
+        // only affects `toBuffer()`, not raw stream consumption). After
+        // the stream is fully consumed, check the `truncated` flag to
+        // distinguish "valid short input" from "client sent too much."
+        if (part.file.truncated) {
+          throw new PayloadTooLargeError();
+        }
+        const body: SuccessBody = { frameCount: result.frameCount };
+        void reply.header('content-type', 'application/json; charset=utf-8');
+        return body;
+      } catch (err) {
+        // If the parser failed but the underlying cause is actually a
+        // size-limit truncation, surface that more useful 413 instead.
+        if (part.file.truncated) {
+          throw new PayloadTooLargeError();
+        }
+        throw err;
+      }
     } catch (err) {
       const { status, body } = mapError(err);
       if (status >= 500) {
@@ -78,7 +99,7 @@ export async function registerFileUploadRoute(app: FastifyInstance): Promise<voi
       } else {
         request.log.warn({ err: { name: (err as Error).name } }, 'Request failed');
       }
-      reply.status(status).header('content-type', 'application/json; charset=utf-8');
+      void reply.status(status).header('content-type', 'application/json; charset=utf-8');
       return body;
     }
   });
