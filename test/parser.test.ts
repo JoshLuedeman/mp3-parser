@@ -2,23 +2,20 @@
  * Parser integration tests.
  *
  * Ground-truth strategy for the provided sample file:
- *   - We pin the expected frame count to a constant (EXPECTED_FRAME_COUNT)
- *     with a comment explaining how it was derived and verified.
- *   - We additionally use `music-metadata` (a third-party MP3 parser
- *     allowed in tests but not in `src/`) to compute a duration-based
- *     estimate and assert ours matches within 1 frame. The ±1 tolerance
- *     exists because the sample contains a Xing/Info VBR header in its
- *     first MPEG-1 L3 frame: structurally that frame is a real frame
- *     (valid header, 1152 samples of silence padding the VBR metadata)
- *     and we count it; ffprobe and music-metadata's duration math omit
- *     it from playback duration. Both interpretations are defensible
- *     and widely used in the wild.
+ *   - The expected frame count is sourced from `mediainfo` (the
+ *     verification tool the assignment names) at test run time, with
+ *     no hardcoded fallback. If mediainfo isn't installed, the suite
+ *     fails loudly rather than silently asserting against a stale
+ *     baked-in number.
+ *   - Our parser is asserted to match mediainfo exactly. Both exclude
+ *     the Xing/Info/VBRI VBR-header frame from the audible count.
+ *     See `src/mp3/vbrHeader.ts` for the detection and rationale.
  *
- * Why third-party parsers in tests is consistent with the assignment:
- *   The rule "no NPM package to parse MP3 frame data" governs the
- *   solution (production code under `src/`). music-metadata is a
- *   `devDependency`, referenced only here. The prompt itself recommends
- *   verifying with `mediainfo` — same idea, different medium.
+ * The project deliberately uses zero NPM packages that parse MP3 frame
+ * data — including in tests. Verification is delegated to the OS-level
+ * mediainfo binary the assignment recommends. Crafted-fixture tests
+ * below exercise edge cases that can be expressed as a few bytes of
+ * literal hex, no parser library needed.
  */
 
 /**
@@ -57,10 +54,7 @@ import { Readable } from 'node:stream';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { parseBuffer } from 'music-metadata';
-
 import { countFrames, NoValidFrameError } from '../src/mp3/parser';
-import { MPEG1_L3_SAMPLES_PER_FRAME } from '../src/mp3/tables';
 
 const SAMPLE_PATH = path.join(__dirname, '..', 'fixtures', 'sound_file.mp3');
 
@@ -108,23 +102,6 @@ describe('countFrames — provided sample file (mediainfo-verified)', () => {
     const a = await countFrames(streamOf(sampleBuffer));
     const b = await countFrames(streamOf(sampleBuffer));
     expect(a.frameCount).toBe(b.frameCount);
-  });
-
-  test('matches music-metadata duration-derived count exactly', async () => {
-    // Independent third-party cross-check: music-metadata reports
-    // duration; convert via samples-per-frame. music-metadata excludes
-    // the Xing/Info frame from its duration math (same as mediainfo),
-    // and so do we — the counts should agree exactly.
-    const result = await countFrames(streamOf(sampleBuffer));
-    const metadata = await parseBuffer(sampleBuffer, 'audio/mpeg', { duration: true });
-    const duration = metadata.format.duration;
-    const sampleRate = metadata.format.sampleRate;
-    expect(typeof duration).toBe('number');
-    expect(sampleRate).toBe(44_100);
-    const referenceFrames = Math.round(
-      ((duration as number) * (sampleRate as number)) / MPEG1_L3_SAMPLES_PER_FRAME,
-    );
-    expect(result.frameCount).toBe(referenceFrames);
   });
 });
 

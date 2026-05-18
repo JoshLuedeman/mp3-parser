@@ -62,13 +62,10 @@ export const MPEG1_SAMPLE_RATES_HZ = [44_100, 48_000, 32_000, 0] as const;
 /**
  * MPEG-1 Layer III always produces 1152 PCM samples per frame.
  *
- * This constant shows up in two places:
- *   1. The frame-length formula uses `samples_per_frame / 8 = 144` as the
- *      "magic constant" multiplier (Layer III packs 1152 samples into one
- *      frame; dividing by 8 converts the bit count to bytes after multiplying
- *      by bitrate/sample_rate).
- *   2. Tests derive the canonical frame count from `music-metadata`'s
- *      `numberOfSamples` value by dividing by this constant.
+ * The frame-length formula uses `samples_per_frame / 8 = 144` as the
+ * "magic constant" multiplier (Layer III packs 1152 samples into one
+ * frame; dividing by 8 converts the bit count to bytes after
+ * multiplying by `bitrate / sample_rate`).
  */
 export const MPEG1_L3_SAMPLES_PER_FRAME = 1152;
 

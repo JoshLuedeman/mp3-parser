@@ -44,7 +44,7 @@ The repository includes the sample file at `fixtures/sound_file.mp3`. This servi
 
 Three ways to verify:
 
-1. **Unit + integration tests** — `pnpm test` runs the full suite. The sample-file assertion is `parserCount === mediainfoCount`, with mediainfo shelled out at run time. A second cross-check derives an independent count from `music-metadata`'s duration math and asserts the same result.
+1. **Unit + integration tests** — `pnpm test` runs the full suite. The sample-file assertion is `parserCount === mediainfoCount`, with mediainfo shelled out at run time.
 2. **Manual `curl`** — start the server and POST the sample as shown above.
 3. **mediainfo cross-check script** — with the server running:
    ```bash
