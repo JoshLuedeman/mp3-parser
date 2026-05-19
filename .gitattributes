@@ -1,0 +1,14 @@
+# Normalize line endings so cross-platform checkouts don't introduce
+# CRLF noise into the tree. Text files always use LF inside the repo;
+# git converts to native on checkout for those that need it.
+
+* text=auto eol=lf
+
+# Binary files: never touch.
+*.mp3 binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.pdf binary
+*.gz binary
+*.zip binary
