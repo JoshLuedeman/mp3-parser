@@ -16,19 +16,25 @@
  *   1. Maintain a rolling buffer (`Buffer.concat` of the unconsumed tail
  *      plus each new chunk).
  *   2. On the very first chunks, skip an ID3v2 tag if present — the tag
- *      can be tens of kilobytes and contains no audio frames.
+ *      is metadata wrapping audio data, not itself a frame.
  *   3. Find the first frame header by scanning for a sync word, then
  *      validating with `decodeHeader`. This is the "initial sync."
- *   4. Inspect the locked frame for a Xing / Info / VBRI signature in
- *      its side-information region. If present, the frame is a VBR
- *      metadata frame and we do *not* count it — matching mediainfo,
- *      ffprobe, and music-metadata. See `vbrHeader.ts` for the
- *      rationale.
- *   5. Jump forward by `frameLengthBytes` and validate the header at
+ *   4. Jump forward by `frameLengthBytes` and validate the header at
  *      the new position. If valid, increment the counter and repeat.
  *      If invalid, fall back to a byte-by-byte resync — this handles
  *      real-world garbage (tag fragments, padding, truncation).
- *   6. When the stream ends, return the final count.
+ *   5. When the stream ends, return the final count.
+ *
+ * Note on Xing/Info/VBRI VBR-header frames:
+ *   The first frame of a VBR-encoded MP3 often carries a Xing, Info, or
+ *   VBRI metadata block in its side-information region. Structurally it
+ *   is a valid MPEG-1 Layer III frame — correct sync, version, layer,
+ *   length, and 1152 samples — and the assignment asks for the number
+ *   of frames *in the file*, not the number of audible playback frames.
+ *   We therefore count it. Mainstream playback tools (mediainfo,
+ *   ffprobe) exclude it to keep their reported duration accurate; that
+ *   is a UX choice for players, not a spec choice. See README "Xing/Info
+ *   VBR-header frame" for the full reasoning.
  *
  * Why the resync fallback instead of strict frame-following?
  *   Real-world MP3 files contain non-audio bytes in unexpected places:
@@ -49,7 +55,6 @@
 
 import { HEADER_SIZE_BYTES, decodeHeader } from './header';
 import type { FrameHeader, ParseResult } from './types';
-import { isVbrHeaderFrame } from './vbrHeader';
 
 /**
  * What we actually consume: an async iterable of `Buffer` chunks. This is
@@ -265,13 +270,8 @@ export async function countFrames(stream: BufferStream): Promise<ParseResult> {
           cursor = frameStartAbsolute;
           break;
         }
-        // If the first locked frame carries a Xing / Info / VBRI VBR
-        // metadata signature, exclude it from the count — matches what
-        // mediainfo (the verification tool named in the assignment),
-        // ffprobe, and music-metadata all report. See `vbrHeader.ts`.
-        const isVbrHeader = isVbrHeaderFrame(buf, found.offset);
         cursor = frameEndAbsolute;
-        frameCount = isVbrHeader ? 0 : 1;
+        frameCount = 1;
         locked = true;
         continue;
       }
@@ -315,12 +315,10 @@ export async function countFrames(stream: BufferStream): Promise<ParseResult> {
   // it — counting partial frames would diverge from every reference
   // implementation (mediainfo, music-metadata, etc.).
 
-  // If we never locked onto any valid frame, the input wasn't an
-  // MPEG-1 L3 stream. Locking with frameCount = 0 is *not* an error —
-  // it means the only frame we found was a Xing/Info/VBRI header, i.e.
-  // a valid but audibly-empty MP3. Mainstream tools report 0 for such
-  // files; we do the same.
-  if (!locked) {
+  // If we never locked onto a valid frame at all, the input wasn't an
+  // MPEG-1 L3 stream. (frameCount === 0 implies we never locked, since
+  // every successful lock now counts at least one frame.)
+  if (!locked || frameCount === 0) {
     throw new NoValidFrameError();
   }
 

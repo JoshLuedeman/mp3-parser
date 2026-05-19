@@ -89,14 +89,18 @@ function which(cmd) {
 
   const delta = serverCount - mediainfoCount;
   console.log(`\nDifference            : ${delta > 0 ? '+' : ''}${delta}`);
-  if (delta === 0) {
-    console.log('\nMatch — service output equals mediainfo exactly.');
+  if (delta === 1) {
+    console.log(
+      '\nExpected +1: this service counts the Xing/Info VBR-header frame\n' +
+        '(structurally a valid MPEG-1 L3 frame per ISO/IEC 11172-3), which\n' +
+        "mediainfo's player-oriented count excludes. See README 'Xing/Info\n" +
+        "VBR-header frame' for the full reasoning.",
+    );
     process.exit(0);
   }
   console.log(
-    '\nUnexpected delta. Expected exact match against mediainfo.\n' +
-      'A delta of +1 typically means the Xing/Info VBR-header frame is\n' +
-      'no longer being skipped — see src/mp3/vbrHeader.ts.',
+    '\nUnexpected delta. Expected exactly +1 (the Xing/Info VBR-header frame).\n' +
+      'Anything else indicates a real discrepancy between this service and mediainfo.',
   );
   process.exit(1);
 })();

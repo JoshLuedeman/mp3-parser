@@ -2,30 +2,31 @@
  * Parser integration tests.
  *
  * Ground-truth strategy for the provided sample file:
- *   - The expected frame count is sourced from `mediainfo` (the
- *     verification tool the assignment names) at test run time, with
- *     no hardcoded fallback. If mediainfo isn't installed, the suite
- *     fails loudly rather than silently asserting against a stale
- *     baked-in number.
- *   - Our parser is asserted to match mediainfo exactly. Both exclude
- *     the Xing/Info/VBRI VBR-header frame from the audible count.
- *     See `src/mp3/vbrHeader.ts` for the detection and rationale.
+ *   - The reference frame count is sourced from `mediainfo` at test
+ *     run time, with no hardcoded fallback. If mediainfo isn't
+ *     installed the suite fails loudly rather than silently asserting
+ *     against a stale baked-in number.
+ *   - We assert `parserCount === mediainfoCount + 1`. The +1 is the
+ *     Xing/Info/VBRI VBR-header frame: structurally a valid MPEG-1
+ *     Layer III frame (correct sync, version, layer, length, 1152
+ *     samples), so we count it per the prompt's literal language ("the
+ *     number of frames in the file"). Mediainfo excludes it from its
+ *     audible-playback count by convention; we follow the spec.
  *
  * The project deliberately uses zero NPM packages that parse MP3 frame
  * data — including in tests. Verification is delegated to the OS-level
- * mediainfo binary the assignment recommends. Crafted-fixture tests
- * below exercise edge cases that can be expressed as a few bytes of
- * literal hex, no parser library needed.
+ * mediainfo binary the prompt's Tips section recommends. Crafted-
+ * fixture tests below exercise edge cases that can be expressed as a
+ * few bytes of literal hex, no parser library needed.
  */
 
+/** Number of MPEG-1 L3 frames in the sample beyond what mediainfo counts. */
+const PARSER_OVER_MEDIAINFO = 1;
+
 /**
- * Query mediainfo for the canonical frame count. Mediainfo is a hard
- * requirement for these tests — no fallback, no fixture-baked number.
- * If mediainfo is missing or fails, the test must fail loudly.
- *
- * This service matches mediainfo's count exactly: both exclude the
- * Xing/Info/VBRI VBR-header frame from the audible frame count. See
- * `src/mp3/vbrHeader.ts` for the rationale.
+ * Query mediainfo for its frame count. Mediainfo is a hard requirement
+ * for these tests — no fallback, no fixture-baked number. If mediainfo
+ * is missing or fails, the test must fail loudly.
  */
 function getMediainfoFrameCount(): number {
   const probe = spawnSync('mediainfo', ['--Inform=Audio;%FrameCount%', SAMPLE_PATH], {
@@ -85,10 +86,10 @@ describe('countFrames — provided sample file (mediainfo-verified)', () => {
 
   beforeAll(async () => {
     sampleBuffer = await readFile(SAMPLE_PATH);
-    expectedCount = getMediainfoFrameCount();
+    expectedCount = getMediainfoFrameCount() + PARSER_OVER_MEDIAINFO;
   });
 
-  test('single-chunk stream matches mediainfo exactly', async () => {
+  test('single-chunk stream counts every structurally valid frame (mediainfo + 1)', async () => {
     const result = await countFrames(streamOf(sampleBuffer));
     expect(result.frameCount).toBe(expectedCount);
   });

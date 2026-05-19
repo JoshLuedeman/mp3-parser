@@ -18,10 +18,14 @@ import * as parser from '../src/mp3/parser';
 const SAMPLE_PATH = path.join(__dirname, '..', 'fixtures', 'sound_file.mp3');
 
 /**
- * Ground truth comes from `mediainfo` — no fallback. The service matches
- * mediainfo's frame count exactly (both exclude the Xing/Info/VBRI VBR
- * metadata frame); see `src/mp3/vbrHeader.ts`.
+ * Reference frame count comes from `mediainfo` — no fallback. Our
+ * service reports `mediainfoCount + 1` because we count the Xing/Info/
+ * VBRI VBR-header frame (a structurally valid MPEG-1 L3 frame that
+ * mediainfo excludes from its playback-focused count). See the README
+ * "Xing/Info VBR-header frame" section for the full reasoning.
  */
+const PARSER_OVER_MEDIAINFO = 1;
+
 function getMediainfoFrameCount(): number {
   const probe = spawnSync('mediainfo', ['--Inform=Audio;%FrameCount%', SAMPLE_PATH], {
     encoding: 'utf8',
@@ -60,7 +64,7 @@ describe('POST /file-upload', () => {
 
   beforeAll(async () => {
     sampleBuffer = await readFile(SAMPLE_PATH);
-    expectedFrameCount = getMediainfoFrameCount();
+    expectedFrameCount = getMediainfoFrameCount() + PARSER_OVER_MEDIAINFO;
   });
 
   beforeEach(async () => {
