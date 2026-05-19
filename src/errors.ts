@@ -71,16 +71,73 @@ function isErrorWithCode(err: unknown): err is { code: string } {
 }
 
 /**
+ * Mapping of @fastify/multipart error codes to client-facing responses.
+ *
+ * Discovered by inspecting `node_modules/@fastify/multipart/index.js` —
+ * the plugin uses `@fastify/error` to define a fixed set of `FST_*` codes
+ * (the same identifiers the plugin throws). Each is given a semantically
+ * accurate status code and a stable client-facing `code` string.
+ *
+ * The plugin's own defaults sometimes differ from what's most useful to
+ * a public API consumer (e.g., the plugin returns 406 for non-multipart
+ * Content-Type; 415 is more conventional). We restate the mapping here
+ * rather than passing the plugin's defaults through verbatim.
+ */
+interface MappedMultipartError {
+  readonly status: number;
+  readonly code: string;
+  readonly message: string;
+}
+
+const MULTIPART_ERROR_MAP: Readonly<Record<string, MappedMultipartError>> = {
+  FST_REQ_FILE_TOO_LARGE: {
+    status: 413,
+    code: 'PAYLOAD_TOO_LARGE',
+    message: 'Uploaded file exceeds the configured size limit',
+  },
+  FST_INVALID_MULTIPART_CONTENT_TYPE: {
+    status: 415,
+    code: 'UNSUPPORTED_MEDIA_TYPE',
+    message: 'Request Content-Type must be multipart/form-data',
+  },
+  FST_FILES_LIMIT: {
+    status: 400,
+    code: 'TOO_MANY_FILES',
+    message: 'Request contained more file parts than this endpoint accepts',
+  },
+  FST_FIELDS_LIMIT: {
+    status: 400,
+    code: 'TOO_MANY_FIELDS',
+    message: 'Request contained too many form fields',
+  },
+  FST_PARTS_LIMIT: {
+    status: 400,
+    code: 'TOO_MANY_PARTS',
+    message: 'Request contained too many multipart parts',
+  },
+  FST_PROTO_VIOLATION: {
+    status: 400,
+    code: 'INVALID_FIELD_NAME',
+    message: 'Request contained a disallowed field name',
+  },
+  FST_INVALID_JSON_FIELD_ERROR: {
+    status: 400,
+    code: 'INVALID_JSON_FIELD',
+    message: 'A request field declared as JSON was not valid JSON',
+  },
+};
+
+/**
  * Convert any thrown value into `{ status, body }` for a JSON response.
  *
- * We special-case:
- *   - Our own `HttpError` subclasses (pass through verbatim).
- *   - `NoValidFrameError` (always 400 — the file isn't a valid MP3).
- *   - Fastify's multipart size-limit error (`FST_REQ_FILE_TOO_LARGE`)
- *     → 413.
+ * Recognized in order:
+ *   1. Our own `HttpError` subclasses (pass through verbatim).
+ *   2. `NoValidFrameError` from the parser → 400.
+ *   3. `@fastify/multipart`'s `FST_*` error codes → mapped per
+ *      `MULTIPART_ERROR_MAP` above (mostly 400/413/415).
  *
  * Everything else is logged at the caller and surfaced as a generic 500
- * with no message details (don't leak internals).
+ * with no message details — never leak internals to the client.
  */
 export function mapError(err: unknown): { status: number; body: ErrorBody } {
   if (err instanceof HttpError) {
@@ -95,19 +152,14 @@ export function mapError(err: unknown): { status: number; body: ErrorBody } {
       body: { error: { code: err.code, message: err.message } },
     };
   }
-  // Fastify multipart raises this when the per-file limit is exceeded.
-  // We match by `code` rather than instanceof because the error class
-  // is not part of @fastify/multipart's public type surface.
-  if (isErrorWithCode(err) && err.code === 'FST_REQ_FILE_TOO_LARGE') {
-    return {
-      status: 413,
-      body: {
-        error: {
-          code: 'PAYLOAD_TOO_LARGE',
-          message: 'Uploaded file exceeds the configured size limit',
-        },
-      },
-    };
+  if (isErrorWithCode(err)) {
+    const mapped = MULTIPART_ERROR_MAP[err.code];
+    if (mapped) {
+      return {
+        status: mapped.status,
+        body: { error: { code: mapped.code, message: mapped.message } },
+      };
+    }
   }
   return {
     status: 500,
