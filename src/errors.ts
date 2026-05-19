@@ -56,10 +56,10 @@ export interface ErrorBody {
 /**
  * Type guard: does `err` have a string `code` property?
  *
- * Used to recognize Fastify's `FST_REQ_FILE_TOO_LARGE` (and similar
- * error-code conventions) without resorting to a structural cast. The
- * predicate's `is` clause lets the compiler narrow `err` to a shape
- * with a `code: string` field inside the conditional block.
+ * Used to recognize Fastify's `FST_*` family of error codes (see
+ * `MULTIPART_ERROR_MAP` below) without resorting to a structural cast.
+ * The predicate's `is` clause lets the compiler narrow `err` to a
+ * shape with a `code: string` field inside the conditional block.
  */
 function isErrorWithCode(err: unknown): err is { code: string } {
   return (

@@ -309,11 +309,13 @@ export async function countFrames(stream: BufferStream): Promise<ParseResult> {
     }
   }
 
-  // Final pass after the stream is exhausted: handle the trailing frame
-  // case where we had a valid header but were waiting for more bytes
-  // that never arrived. The frame is *incomplete*, so we do NOT count
-  // it — counting partial frames would diverge from every reference
-  // implementation (mediainfo, music-metadata, etc.).
+  // Final pass after the stream is exhausted: handle the trailing
+  // frame case where we had a valid header but were waiting for more
+  // bytes that never arrived. The frame is *incomplete*, so we do NOT
+  // count it — the MPEG spec defines a frame as a header plus its
+  // complete payload, and a header whose data extends past EOF doesn't
+  // satisfy that. Reference tools (mediainfo, ffprobe) likewise omit
+  // truncated trailing frames.
 
   // If we never locked onto a valid frame at all, the input wasn't an
   // MPEG-1 L3 stream. (frameCount === 0 implies we never locked, since
