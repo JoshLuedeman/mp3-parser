@@ -1,0 +1,59 @@
+# Continuous integration for mp3-parser.
+#
+# Runs the same `pnpm verify` gate that local development uses:
+# lint (type-aware), Prettier format check, full Jest suite, and a
+# clean TypeScript compile — in that order, fail-fast.
+#
+# `mediainfo` is installed as a system package because the parser's
+# ground-truth tests shell out to it (no NPM fallback by design — see
+# README "Verifying the result").
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Cancel in-progress runs when a new commit lands on the same ref —
+# saves CI minutes when force-pushing or pushing rapidly.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: lint, format, test, build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install mediainfo
+        # Required by test/parser.test.ts and test/route.test.ts —
+        # the canonical frame count is sourced from mediainfo at
+        # test runtime, with no hardcoded fallback.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mediainfo
+          mediainfo --version | head -1
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Verify (lint, format-check, test, build)
+        run: pnpm verify

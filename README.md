@@ -1,5 +1,13 @@
 # MP3 Frame Counter
 
+<!--
+  Once the repo lives at a known GitHub URL, replace OWNER/mp3-parser
+  below with the actual path. The badge renders as a green "passing"
+  check when CI is healthy. The CI workflow is in .github/workflows/ci.yml.
+-->
+
+[![CI](https://github.com/OWNER/mp3-parser/actions/workflows/ci.yml/badge.svg)](https://github.com/OWNER/mp3-parser/actions/workflows/ci.yml)
+
 HTTP API that accepts an MP3 upload and returns the number of MPEG-1 Audio Layer III frames it contains. Built with TypeScript and Fastify; the MP3 frame parser is implemented from scratch against the ISO/IEC 11172-3 bit layout.
 
 ```http
