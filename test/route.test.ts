@@ -13,6 +13,7 @@ import type { FastifyInstance } from 'fastify';
 import request from 'supertest';
 
 import { buildApp } from '../src/app';
+import * as parser from '../src/mp3/parser';
 
 const SAMPLE_PATH = path.join(__dirname, '..', 'fixtures', 'sound_file.mp3');
 
@@ -142,5 +143,54 @@ describe('POST /file-upload', () => {
 
     expect(response.status).toBe(413);
     expect(asErrorBody(response.body).error.code).toBe('PAYLOAD_TOO_LARGE');
+  });
+
+  test('500 INTERNAL_ERROR when the parser throws an unexpected error', async () => {
+    // Inject a synthetic non-HttpError into countFrames to verify the
+    // generic 500 fallback path. Two properties matter:
+    //   1. The status code is exactly 500 with the canonical body.
+    //   2. No internal detail (message, stack, error class name) leaks
+    //      to the client — sensitive internals must stay server-side.
+    //
+    // The route reaches countFrames via `parser.countFrames(...)` (a
+    // namespace import) precisely so jest.spyOn can intercept the call.
+    //
+    // The mock drains the stream before throwing. A real parse-then-fail
+    // would consume the upload before signaling failure; not draining
+    // leaves Fastify trying to respond while the client is still writing
+    // bytes, which produces EPIPE on the wire instead of our 500 body.
+    const SECRET_INTERNAL_DETAIL = 'do-not-leak-this-string-to-the-client';
+    const spy = jest
+      .spyOn(parser, 'countFrames')
+      .mockImplementation(async (stream: parser.BufferStream) => {
+        for await (const _chunk of stream) {
+          // discard — we just need the stream consumed so the server
+          // can write its response without the client still buffering
+        }
+        throw new RangeError(SECRET_INTERNAL_DETAIL);
+      });
+
+    try {
+      const response = await request(app.server)
+        .post('/file-upload')
+        .attach('file', Buffer.alloc(64, 0x00), {
+          filename: 'sound_file.mp3',
+          contentType: 'audio/mpeg',
+        });
+
+      expect(response.status).toBe(500);
+      expect(response.body).toEqual({
+        error: { code: 'INTERNAL_ERROR', message: 'Unexpected server error' },
+      });
+
+      // Defense-in-depth: scan the entire wire body for any indicator
+      // of the synthetic internal error. None of these should leak.
+      const wireBody = JSON.stringify(response.body);
+      expect(wireBody).not.toContain(SECRET_INTERNAL_DETAIL);
+      expect(wireBody).not.toContain('RangeError');
+      expect(wireBody).not.toContain('stack');
+    } finally {
+      spy.mockRestore();
+    }
   });
 });
