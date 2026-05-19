@@ -28,7 +28,12 @@ import {
   UnsupportedMediaTypeError,
   mapError,
 } from '../errors';
-import { type BufferStream, countFrames } from '../mp3/parser';
+import type { BufferStream } from '../mp3/parser';
+// Namespace import (rather than destructured) so test code can apply
+// `jest.spyOn(parser, 'countFrames')` and intercept at call time.
+// With a destructured import the route would capture a local reference
+// to the original function at module load and bypass the spy.
+import * as parser from '../mp3/parser';
 
 const JSON_CONTENT_TYPE = 'application/json; charset=utf-8';
 
@@ -162,7 +167,7 @@ export function registerFileUploadRoute(app: FastifyInstance): void {
 
         let result;
         try {
-          result = await countFrames(fileStream);
+          result = await parser.countFrames(fileStream);
         } catch (parseErr) {
           // @fastify/multipart silently truncates the stream when fileSize
           // is exceeded — `throwFileSizeLimit: true` only affects
@@ -177,13 +182,26 @@ export function registerFileUploadRoute(app: FastifyInstance): void {
         return reply.type(JSON_CONTENT_TYPE).send(body);
       } catch (err) {
         const { status, body } = mapError(err);
-        if (status >= 500) {
+        const errName = err instanceof Error ? err.name : 'unknown';
+
+        // Distinguish three kinds of failure in the log signal:
+        //   1. Client aborted mid-upload (TCP closed before we finished
+        //      consuming the body). Symptom: request socket is destroyed
+        //      and the error fell into the generic 500 bucket because
+        //      the underlying stream errored. Logged at info — not a bug,
+        //      not a 4xx client mistake, just an interrupted upload.
+        //   2. Genuine server-side bug (5xx with the socket still up).
+        //      Logged at error with the full err object.
+        //   3. 4xx — client sent something we rejected. Logged at warn
+        //      with just the error name (don't spam logs with full
+        //      stack traces for every bad upload).
+        const clientAborted = status >= 500 && request.raw.destroyed;
+        if (clientAborted) {
+          request.log.info({ errName }, 'Client disconnected before request completed');
+        } else if (status >= 500) {
           request.log.error({ err }, 'Unexpected error counting MP3 frames');
         } else {
-          request.log.warn(
-            { errName: err instanceof Error ? err.name : 'unknown' },
-            'Request failed',
-          );
+          request.log.warn({ errName }, 'Request failed');
         }
         return reply.status(status).type(JSON_CONTENT_TYPE).send(body);
       }
