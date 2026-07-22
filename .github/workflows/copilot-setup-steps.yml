@@ -1,0 +1,72 @@
+# Prepares the environment used by GitHub Copilot's cloud coding-agent
+# sandbox for this repository (mp3-parser: TypeScript / Node.js / pnpm).
+#
+# Sets up the same Node + pnpm toolchain and mediainfo dependency as
+# ci.yml, installs project dependencies, then best-effort installs the
+# hve-core-all Copilot CLI plugin (github.com/microsoft/hve-core) so it
+# is available inside the sandbox. The plugin install step is
+# non-blocking — the sandbox must come up even if it fails.
+
+name: "Copilot Setup Steps"
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+  pull_request:
+    paths:
+      - .github/workflows/copilot-setup-steps.yml
+
+permissions:
+  contents: read
+
+jobs:
+  copilot-setup-steps:
+    name: copilot-setup-steps
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+        with:
+          version: 9
+
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20'
+          cache: pnpm
+
+      - name: Install mediainfo
+        # Required by the repo's test suite (test/parser.test.ts,
+        # test/route.test.ts shell out to it for ground-truth counts).
+        continue-on-error: true
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends mediainfo
+          mediainfo --version | head -1
+
+      - name: Install dependencies
+        continue-on-error: true
+        run: pnpm install --frozen-lockfile
+
+      - name: Install hve-core-all plugin
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: bash .devcontainer/setup-hve-core.sh
+
+      - name: Verify tools
+        run: |
+          node --version
+          pnpm --version
+          copilot --version || echo "copilot CLI not available"
+          copilot plugin list || echo "no plugins listed"
