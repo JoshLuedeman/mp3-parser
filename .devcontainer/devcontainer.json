@@ -1,0 +1,15 @@
+{
+  "name": "mp3-parser",
+  "image": "mcr.microsoft.com/devcontainers/typescript-node:1-20-bookworm",
+  "features": {
+    "ghcr.io/devcontainers/features/node:1": {
+      "version": "20"
+    }
+  },
+  "postCreateCommand": "corepack enable && corepack prepare pnpm@9 --activate && sudo apt-get update && sudo apt-get install -y --no-install-recommends mediainfo && pnpm install --frozen-lockfile && bash .devcontainer/setup-hve-core.sh",
+  "customizations": {
+    "vscode": {
+      "extensions": ["dbaeumer.vscode-eslint", "esbenp.prettier-vscode"]
+    }
+  }
+}
